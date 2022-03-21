@@ -1,0 +1,249 @@
+---
+title: "Data Replication Project Final"
+author: "Tyler Dedrick"
+date: "3/20/2022"
+output: 
+  html_document:
+    theme: cerulean
+    toc: true
+    toc_float: true
+    code_download: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      error = TRUE)
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(dplyr)
+
+```
+
+## Introduction
+
+This markdown attempts to replicate data statements made with data by the Washington Post in its 2018 article "As police struggle to solve homicides, Baltimore residents see an ‘open season for killing.’"
+
+The Washington Post examined homicides in 50 US cities.
+
+
+### Data 
+
+This markdown uses data provided by Post author Steven Rich: https://github.com/washingtonpost/data-homicides
+
+There is no data dictionary, but details are listed under the "Data Collection" portion of the README.md file on the GitHub website.
+
+
+## Pulling data
+
+
+```{r}
+
+washpo_raw <- read_csv(url("https://raw.githubusercontent.com/washingtonpost/data-homicides/master/homicide-data.csv"))
+```
+```{r}
+glimpse(washpo_raw)
+```
+### Cleaning the data
+
+To recreate the data statements in this story, we're going to create two datasets based on the old one. "washpo_year" pulls the year out of "reported_date", and "washpo_clean" cleans the dates of all but 2 rows, which pull NAs. for "washpo_clean" we're only going to need Baltimore, so we'll filter other cities out here.
+
+P.S. I got halfway through the assignment and decide it would be easier to create new columns for percentages up front, so I'll be using both the "washpo_year" and "washpo_pct" databases.
+
+```{r}
+washpo_year <-
+  washpo_raw %>%
+  mutate(report_year = str_sub(reported_date, 1, 4)) %>%
+  select(uid, report_year, city, state, disposition)
+
+```
+```{r}
+washpo_pct <-
+  washpo_year %>%
+  group_by(state, city, report_year, disposition) %>%
+  summarize( arrest_status = n()) %>%
+  mutate (pct_arrest_status = arrest_status / sum(arrest_status) * 100) %>%
+  ungroup()
+
+```
+
+
+```{r}
+washpo_clean <-
+  washpo_raw %>%
+  mutate(report_year = ymd(reported_date)) %>%
+  select(uid, report_year, city, state, disposition) %>%
+  filter(city == "Baltimore")
+```
+
+```{r}
+washpo_year %>%
+  group_by(disposition) %>%
+  summarize( n())
+
+```
+
+## Part 1:
+
+The first two paragraphs we will attempt to replicate are the following: "As Baltimore has seen a stunning surge of violence, with nearly a killing each day for the past three years in a city of 600,000, homicide arrests have plummeted. City police made an arrest in 41 percent of homicides in 2014; last year, the rate was just 27 percent, a 14 percentage point drop." and  "For most of the decade before 2015, Baltimore’s annual homicide arrest rate hovered at about 40 percent. Since 2015, the arrest rate hasn’t topped 30 percent in any year."
+
+
+Specifically, we will attempt replicate these specific data points:
+
+1. nearly a homicide  day for the past three years
+
+2. arrest rate of 41 percent  2014
+
+3. arrest rate of 27 percent in 2017
+
+4. homicide arrest rate around 40 percent for decade prior to 2015
+
+5. Homicide arrest rate below 30 for 2015-onward
+
+
+It seems like a lot, but we'll be able to replicate points 2-5 with a single table. 
+
+### Part 1.1 Nearly a homicide a day for the past three years
+
+It's not perfect, but to find this number I'm just going to calculate the number of homicides in 2015, 2016 and 2017 (the "past three years" as of the 2018 publication date) and compare it to the number of days in these three years. 
+
+
+```{r}
+
+washpo_year %>%
+  group_by(report_year) %>%
+  filter(city == "Baltimore" & report_year %in% c("2015","2016","2017")) %>%
+ summarize(n())
+
+```
+
+Since there's about 365 days per year, we can creatively replicate the statement that there was "nearly a killing each day for the past three year."
+
+### Part 1.2 Examining Baltimore arrest rates over time
+
+How do we tell where Baltimore's homicide rate "hovered"? We can just group the rates by year and how the status of the case and see from there:
+
+```{r}
+washpo_year %>%
+  filter(city == "Baltimore") %>%
+  group_by(report_year, disposition) %>%
+  summarize(arrest_status = n()) %>%
+  mutate(pct_arrest_status = arrest_status / sum(arrest_status) * 100) %>%
+  filter(disposition == "Closed by arrest") %>%
+  pivot_wider(id_cols = report_year,
+              names_from = disposition,
+              values_from = pct_arrest_status,
+              values_fill = 0)
+
+
+```
+
+
+We see that cases were "Closed by arrest" in 40.7 percent of homicides in 2014. Rounded up, that's the 41 percent we're looking for. We also see that for 2017, 27.3 percent of cases were closed by arrest — or, rounded down, 27 percent. 
+
+```{r}
+print(41-27)
+```
+That's a 14-point drop when you calculate the drop with rounded numbers.
+
+This works just fine for the decade or so of data we're working with — but I was curious how I might handle this if we had lots of years of data, so I looked for the minimum and maximum arrest rates for the time periods before and after 2015: 
+
+```{r}
+washpo_pct %>%
+  filter(city == "Baltimore" & report_year < 2015 & disposition == "Closed by arrest") %>%
+  group_by(disposition) %>%
+  summarize(arrest_high = max(pct_arrest_status),
+            arrest_low = min(pct_arrest_status))
+
+```
+From 2007 - 2014, the arrest rate for homicides in Baltimore ranged between 39 and 44 percent. That seems like "hovered at about 40 percent" to me.
+
+```{r}
+washpo_pct %>%
+  filter(city == "Baltimore" & report_year >= 2015 & disposition == "Closed by arrest") %>%
+  group_by(disposition) %>%
+  summarize(arrest_high = max(pct_arrest_status),
+            arrest_low = min(pct_arrest_status))
+
+```
+Between 2015 and 2017, the arrest rates in Baltimore ranged from 22.5 to 27 percent. That's certainly less than 30 percent. 
+
+
+## Part 2
+
+Finally, we examine the following sentence: "And while most cities saw their arrest rates drop gradually, Baltimore’s decline was sudden — plummeting 15 percentage points in 2015, after Gray’s death, the largest single-year drop for any city already solving less than half its homicides."
+
+Specifically: 
+
+7. Most cities saw their arrest rate drop gradually
+
+8. Baltimore's arrest rate dropped 15 percentage points in 2015 
+
+9. Baltimore's arrest rate drop compared to single-year drops in other cities with a 50% or less arrest rate
+
+
+### Most cities saw their arrest rate drop gradually
+
+I'm going to use the mean to see overall arrest rate trends across all cities. 
+
+```{r}
+washpo_pct %>%
+  filter(disposition == "Closed by arrest") %>%
+  mutate(yoy_change = pct_arrest_status - lag(pct_arrest_status)) %>%
+  select(city, report_year, disposition, pct_arrest_status, yoy_change) %>%
+  group_by(disposition) %>%
+ summarize(mean(yoy_change, na.rm = TRUE))
+```
+
+Interesting — looks like the mean year-over-year change is actually positive — a very small positive number, but still positive. 
+
+**I was not able to replicate this sentence.**
+
+### Baltimore's arrest rate dropped 15 percentage points in 2015 
+
+```{r}
+washpo_pct %>%
+  filter(disposition == "Closed by arrest") %>%
+  mutate(yoy_change = pct_arrest_status - lag(pct_arrest_status)) %>%
+  select(city, report_year, disposition, pct_arrest_status, yoy_change) %>%
+  filter(city == "Baltimore", report_year == "2015") 
+```
+
+Looks like cases that were closed with an arrest went down by 15 percentage points in 2015. This checks out.
+
+### Baltimore's arrest rate drop compared to single-year drops in other cities with a 50% or less arrest rate
+
+The Post's sentence is a bit complicated "plummeting 15 percentage points in 2015, after Gray’s death, the largest single-year drop for any city already solving less than half its homicides."
+
+So it sounds like we want to look for year-over-year drops in arrest rates in cities where the previous year's arrest rate was already under 50 percent. Then we want to compare Baltimore's 15 percentage point drop to other cities and see how it ranks. 
+
+
+```{r}
+washpo_pct %>%
+  filter(disposition == "Closed by arrest") %>%
+  mutate(yoy_change = pct_arrest_status - lag(pct_arrest_status)) %>%
+  select(city, report_year, pct_arrest_status, yoy_change) %>%
+  filter(lag(pct_arrest_status) <= 50) %>%
+  arrange(yoy_change)
+```
+Here is another way to look at this numbers, as a trend rather than as point-in-time results. This table is showing us the arrest rate of each city by year, sorted by which cities had the lowest arrest rate in 2014:
+
+```{r}
+washpo_pct %>%
+   filter(disposition == "Closed by arrest") %>%
+   mutate(yoy_change = pct_arrest_status - lag(pct_arrest_status)) %>%
+  select(city, report_year, disposition, pct_arrest_status, yoy_change) %>%
+  filter(report_year >= 2014 & lag(pct_arrest_status) <= 50) %>%
+  arrange(report_year, yoy_change) %>%
+  pivot_wider ( id_cols = city,
+            names_from = report_year, 
+            values_from = pct_arrest_status, 
+            #values_fill = 0
+            ) %>%
+  arrange(`2014`)
+```
+
+It looks like Baltimore's 15 percentage point drop doesn't even make the top five drops in year-over-year arrest rate, as of the time this article was published. It's possible I have a coding error. Or perhaps the Post authors were only looking up through 2015 — although the Post did not state this so it seems unlikely, and even so, San Bernadino still had a larger year-over-year drop in arrest rate. 
+
+**I was not able to reproduce this one.**
